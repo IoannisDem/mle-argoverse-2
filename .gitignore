@@ -1,0 +1,19 @@
+# Environment files
+.env
+
+# Data directories
+**/data/
+**/data-zip/
+
+# Image files
+*.png
+*.jpg
+*.jpeg
+
+# Python caches
+.ruff_cache/
+.pytest_cache/
+__pycache__/
+
+# Model checkpoints
+*.pt
