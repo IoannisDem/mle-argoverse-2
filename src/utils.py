@@ -1,15 +1,26 @@
 import yaml
 import numpy as np
 import torch
+from pathlib import Path
+import json
 
 
 def get_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def read_yaml(file_path):
-    with open(file_path, "r") as file:
+def read_yaml(file_path: str | Path) -> dict:
+    file_path = Path(file_path)
+
+    with file_path.open("r") as file:
         return yaml.safe_load(file)
+
+
+def read_json(file_path: str | Path) -> dict:
+    file_path = Path(file_path)
+
+    with file_path.open("r") as file:
+        return json.load(file)
 
 
 def _to_uint8(img: np.ndarray) -> np.ndarray:
