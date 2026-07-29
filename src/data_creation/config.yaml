@@ -1,0 +1,23 @@
+output_path: data\raw
+meta_env:
+  image_observation: true
+
+  image_on_cuda: false
+
+  vehicle_config:
+    image_source: rgb_camera
+
+  sensors:
+    rgb_camera:
+      type: rgb_camera
+      width: 256
+      height: 256
+
+  agent_policy: expert_policy
+
+  num_scenarios: 1
+  start_seed: 0
+  traffic_density: 0.15
+  accident_prob: 0.3
+
+  log_level: 50
