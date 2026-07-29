@@ -1,4 +1,6 @@
 output_path: data\raw
+max_steps: 1000
+
 meta_env:
   image_observation: true
 
@@ -13,11 +15,13 @@ meta_env:
       width: 256
       height: 256
 
+  stack_size: 1
+
   agent_policy: expert_policy
 
-  num_scenarios: 1
+  num_scenarios: 100
   start_seed: 0
   traffic_density: 0.15
-  accident_prob: 0.3
+  accident_prob: 0.5
 
   log_level: 50

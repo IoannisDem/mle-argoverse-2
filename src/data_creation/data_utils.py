@@ -41,6 +41,7 @@ class EnvConfig:
     image_on_cuda: bool = False
     vehicle_config: dict = dataclasses.field(default_factory=dict)
     sensors: dict = dataclasses.field(default_factory=dict)
+    stack_size: int = 1
     agent_policy: type = ExpertPolicy
     num_scenarios: int = 100
     start_seed: int = 0
@@ -52,6 +53,7 @@ class EnvConfig:
 @dataclasses.dataclass
 class DataConfig:
     output_path: str
+    max_steps: int
     env_config: EnvConfig
 
 
@@ -78,6 +80,7 @@ def _create_env_config(config: dict[str, Any]) -> EnvConfig:
 def parse_meta_env_config(config: dict[str, Any]) -> DataConfig:
     return DataConfig(
         output_path=config["output_path"],
+        max_steps=config["max_steps"],
         env_config=_create_env_config(config["meta_env"]),
     )
 
