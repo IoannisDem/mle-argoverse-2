@@ -6,6 +6,7 @@ from metadrive.envs.metadrive_env import MetaDriveEnv
 import numpy as np
 
 from metadrive.policy.expert_policy import ExpertPolicy
+from metadrive.policy.idm_policy import IDMPolicy
 from metadrive.component.sensors.rgb_camera import RGBCamera
 from enum import Enum
 from utils import to_numpy_image
@@ -28,10 +29,12 @@ SENSOR_REGISTRY = {
 
 class ExpertPolicyType(Enum):
     EXPERT_POLICY = "expert_policy"
+    IDM_POLICY = "idm_policy"
 
 
 POLICY_REGISTRY = {
     ExpertPolicyType.EXPERT_POLICY: ExpertPolicy,
+    ExpertPolicyType.IDM_POLICY: IDMPolicy,
 }
 
 
