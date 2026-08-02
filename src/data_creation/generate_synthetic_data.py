@@ -3,6 +3,7 @@ from data_creation import data_utils
 from utils import read_yaml
 import json
 from pathlib import Path
+import time
 
 
 def main():
@@ -21,12 +22,13 @@ def main():
 
             episode_result = data_utils.collect_episode(env, seed, max_steps)
             meta = data_utils.save_episode(
-                episode_idx,
+                seed,
                 seed,
                 episode_result,
                 output_path,
             )
             summary.append(meta)
+            time.sleep(10)
 
     finally:
         env.close()

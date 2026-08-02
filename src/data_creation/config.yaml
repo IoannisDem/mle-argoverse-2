@@ -1,4 +1,4 @@
-output_path: data\raw
+output_path: data/raw
 max_steps: 1000
 
 meta_env:
@@ -19,9 +19,9 @@ meta_env:
 
   agent_policy: idm_policy
 
-  num_scenarios: 20
-  start_seed: 100
-  traffic_density: 0.2
+  num_scenarios: 1000
+  start_seed: 0
+  traffic_density: 0.15
   accident_prob: 0
 
   log_level: 50

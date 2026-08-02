@@ -95,8 +95,8 @@ def render_video(
 
 
 def main():
-    images_data_paths = glob.glob(r"C:\Users\ioann\Desktop\github\mle-argoverse-2\data\raw\traffic_0.3_accident_0_steps_1000\**\images.npy")
-    data_paths = {path.split("\\")[-2]: path for path in images_data_paths}
+    images_data_paths = glob.glob(r"/home/ioannis/github_repo/ioannisdem/mle-argoverse-2/data/raw/traffic_0.2_accident_0_steps_1000/**/images.npy")
+    data_paths = {path.split("/")[-2]: path for path in images_data_paths}
     episodes_images = {key:utils.to_numpy_image( np.load(value)) for key, value in data_paths.items()}
 
     names = list(episodes_images.keys())
@@ -105,7 +105,7 @@ def main():
     render_video(
         images,
         names,
-        r"C:\Users\ioann\Desktop\github\mle-argoverse-2\src\sample.mp4",
+        r"/home/ioannis/github_repo/ioannisdem/mle-argoverse-2/src/sample.mp4",
         fps = 10,
     )
 

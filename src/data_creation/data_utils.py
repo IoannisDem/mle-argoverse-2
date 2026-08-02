@@ -138,6 +138,7 @@ def save_episode(
     output_path: Path,
 ) -> dict[str, Any]:
     ep_dir = output_path / f"episode_{episode_idx:03d}"
+    logger.info(f"Saving episode at path: {ep_dir}")
     ep_dir.mkdir(parents=True, exist_ok=True)
 
     np.save(ep_dir / "images.npy", episode_result.images)
