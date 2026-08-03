@@ -114,6 +114,7 @@ def collect_episode(
         action = env.engine.get_policy(env.agent.id).act(env.agent.id)
 
         images.append(to_numpy_image(obs["image"]))
+        # State vector desciption: https://github.com/metadriverse/metadrive/blob/main/metadrive/obs/state_obs.py#L30
         states.append(np.asarray(obs["state"], dtype=np.float32).copy())
         actions.append(np.asarray(action, dtype=np.float32).copy())
 
