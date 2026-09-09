@@ -1,4 +1,5 @@
 import dataclasses
+from pathlib import Path
 from typing import Callable, TypedDict
 
 import numpy as np
@@ -24,6 +25,43 @@ class FrameDatapoint:
     frames: list[FrameSpec]
     label: FrameSpec
 
+
+def load_episode_sequences(data_dir: str | Path) -> list[EpisodeSequence]:
+    """Load saved episode arrays from a directory of ``episode_*`` folders."""
+
+    data_dir = Path(data_dir)
+    episode_dirs = sorted(path for path in data_dir.glob("episode_*") if path.is_dir())
+    if not episode_dirs:
+        raise FileNotFoundError(f"No episode directories found in {data_dir}")
+
+    episodes: list[EpisodeSequence] = []
+    for episode_dir in episode_dirs:
+        images = np.load(episode_dir / "images.npy", allow_pickle=False)
+        states = np.load(episode_dir / "states.npy", allow_pickle=False)
+        actions = np.load(episode_dir / "actions.npy", allow_pickle=False)
+
+        if not (len(images) == len(states) == len(actions)):
+            raise ValueError(
+                f"Mismatched lengths in {episode_dir}: "
+                f"images={len(images)}, states={len(states)}, actions={len(actions)}"
+            )
+
+        frame_sequence = [
+            FrameSpec(
+                image_array=images[index],
+                current_state=states[index],
+                next_action=actions[index],
+            )
+            for index in range(len(images))
+        ]
+        episodes.append(
+            EpisodeSequence(
+                episode_name=episode_dir.name,
+                frame_sequence=frame_sequence,
+            )
+        )
+
+    return episodes
 
 
 class ModelInput(TypedDict):
@@ -88,11 +126,15 @@ class EpisodeFrameWindowDataset(Dataset):
         stride: int = 1,
     ):
         self._transformations = transformations
-        self._datapoints = get_datapoints(
-            episodes,
-            window_size=window_size,
-            stride=stride,
-        )
+        self._datapoints = [
+            datapoint
+            for episode in episodes
+            for datapoint in get_datapoints(
+                episode,
+                window_size=window_size,
+                stride=stride,
+            )
+        ]
 
     def __len__(self) -> int:
         return len(self._datapoints)

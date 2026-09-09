@@ -6,7 +6,7 @@ import json
 
 
 def get_device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return "cuda" if torch.cuda.is_available() else "cpu"
 
 
 def read_yaml(file_path: str | Path) -> dict:
