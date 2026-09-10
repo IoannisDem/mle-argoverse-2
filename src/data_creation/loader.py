@@ -35,7 +35,7 @@ def load_episode_sequences(data_dir: str | Path) -> list[EpisodeSequence]:
         raise FileNotFoundError(f"No episode directories found in {data_dir}")
 
     episodes: list[EpisodeSequence] = []
-    for episode_dir in episode_dirs:
+    for episode_dir in episode_dirs[:2]:
         images = np.load(episode_dir / "images.npy", allow_pickle=False)
         states = np.load(episode_dir / "states.npy", allow_pickle=False)
         actions = np.load(episode_dir / "actions.npy", allow_pickle=False)
@@ -92,11 +92,27 @@ def get_datapoints(
 
 
 def default_frame_history_transform(frame_history: np.ndarray) -> torch.Tensor:
+    frame_history = np.asarray(frame_history)
+    if frame_history.ndim == 5 and frame_history.shape[-1] == 1:
+        frame_history = frame_history[..., 0]
+    if frame_history.ndim != 4:
+        raise ValueError(
+            "Expected frame history with shape [time, height, width, channels] "
+            f"or [time, height, width, channels, 1], got {frame_history.shape}"
+        )
     return torch.from_numpy(frame_history).permute(0, 3, 1, 2).float() / 255.0
 
 
 def default_frame_transform(image_array: np.ndarray) -> torch.Tensor:
-    return torch.from_numpy(np.asarray(image_array)).permute(2, 0, 1).float() / 255.0
+    image_array = np.asarray(image_array)
+    if image_array.ndim == 4 and image_array.shape[-1] == 1:
+        image_array = image_array[..., 0]
+    if image_array.ndim != 3:
+        raise ValueError(
+            "Expected frame with shape [height, width, channels] or "
+            f"[height, width, channels, 1], got {image_array.shape}"
+        )
+    return torch.from_numpy(image_array).permute(2, 0, 1).float() / 255.0
 
 
 def default_state_transform(state: np.ndarray) -> torch.Tensor:
