@@ -1,5 +1,11 @@
 # mle-argoverse-2
 
+PYTHONPATH=src python src/train/train_baseline.py \
+  --data-dir data/raw/traffic_0.15_accident_0_steps_1000 \
+  --epochs 10 --batch-size 8 --num-workers 4 \
+  --checkpoint-dir checkpoints/baseline_residual
+
+
 ## Objective
 
 Learn an action-conditioned world model of a driving scene: given a short history of
