@@ -163,7 +163,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--epochs", type=int, default=50)
-    parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument("--warmup-steps", type=int, default=200)
     parser.add_argument(
         "--checkpoint-dir",
         type=Path,
@@ -202,6 +203,7 @@ def main() -> None:
         config=TrainingConfig(
             num_epochs=args.epochs,
             learning_rate=args.learning_rate,
+            warmup_steps=args.warmup_steps,
             checkpoint_dir=args.checkpoint_dir,
         ),
     )

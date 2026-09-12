@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import math
 from pathlib import Path
 from typing import Callable
 
@@ -23,13 +24,15 @@ Batch = dict[str, torch.Tensor]
 @dataclasses.dataclass
 class TrainingConfig:
     num_epochs: int = 50
-    learning_rate: float = 1e-4
+    learning_rate: float = 1e-3
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     checkpoint_dir: Path | None = None
     early_stopping_patience: int | None = 5
     log_every_n_epochs: int = 1
     use_wandb: bool = False
     wandb_project: str = "mle-argoverse-2"
+    warmup_steps: int = 200
+    min_learning_rate_ratio: float = 0.01
 
 
 @dataclasses.dataclass
@@ -37,6 +40,7 @@ class EpochMetrics:
     epoch: int
     train_loss: float
     val_loss: float
+    learning_rate: float | None = None
     val_persistence_l1: float | None = None
     val_skill: float | None = None
     val_psnr: float | None = None
@@ -54,6 +58,32 @@ class TrainState:
     criterion: Callable
     device: str
     optimizer: torch.optim.Optimizer | None = None
+    scheduler: torch.optim.lr_scheduler.LRScheduler | None = None
+
+
+def build_scheduler(
+    optimizer: torch.optim.Optimizer,
+    config: TrainingConfig,
+    steps_per_epoch: int,
+) -> torch.optim.lr_scheduler.LambdaLR:
+    """Linear warmup followed by cosine decay, stepped once per optimizer step.
+
+    Warmup matters here because the residual head is zero-initialised, so the first
+    steps train only that head while every upstream gradient is still zero.
+    """
+
+    total_steps = max(1, config.num_epochs * steps_per_epoch)
+    warmup_steps = min(config.warmup_steps, total_steps)
+    floor = config.min_learning_rate_ratio
+
+    def learning_rate_factor(step: int) -> float:
+        if step < warmup_steps:
+            return (step + 1) / warmup_steps
+        progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+        cosine = 0.5 * (1 + math.cos(math.pi * min(1.0, progress)))
+        return floor + (1 - floor) * cosine
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, learning_rate_factor)
 
 
 def train_model(
@@ -64,18 +94,23 @@ def train_model(
 ) -> list[EpochMetrics]:
     model.to(config.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
+    scheduler = build_scheduler(
+        optimizer, config, steps_per_epoch=len(dataset.train_loader)
+    )
 
     logger.info(
-        "Starting training for %d epochs on %s with learning rate %.2e",
+        "Starting training for %d epochs on %s with peak learning rate %.2e "
+        "(%d warmup steps, then cosine decay)",
         config.num_epochs,
         config.device,
         config.learning_rate,
+        min(config.warmup_steps, config.num_epochs * len(dataset.train_loader)),
     )
 
     if config.use_wandb:
         wandb.init(project=config.wandb_project, config=dataclasses.asdict(config))
 
-    train_state = TrainState(criterion, config.device, optimizer)
+    train_state = TrainState(criterion, config.device, optimizer, scheduler)
     eval_state = TrainState(criterion, config.device, optimizer=None)
 
     history: list[EpochMetrics] = []
@@ -95,6 +130,7 @@ def train_model(
             epoch=epoch,
             train_loss=train_loss,
             val_loss=val_loss,
+            learning_rate=scheduler.get_last_lr()[0],
             **_frame_metric_fields(frame_metrics),
         )
         history.append(metrics)
@@ -105,12 +141,13 @@ def train_model(
             or epoch == config.num_epochs
         ):
             logger.info(
-                "Epoch %d/%d - train_loss=%.6f, val_loss=%.6f%s",
+                "Epoch %d/%d - train_loss=%.6f, val_loss=%.6f%s, lr=%.2e",
                 epoch,
                 config.num_epochs,
                 train_loss,
                 val_loss,
                 _format_frame_metrics(frame_metrics),
+                metrics.learning_rate,
             )
 
         if config.use_wandb:
@@ -237,6 +274,8 @@ def training_step(model: nn.Module, state: TrainState, batch: Batch) -> float:
     loss = _compute_loss(predicted_frame, batch, state.criterion)
     loss.backward()
     state.optimizer.step()
+    if state.scheduler is not None:
+        state.scheduler.step()
 
     return loss.item()
 
