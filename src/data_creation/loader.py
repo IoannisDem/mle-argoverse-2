@@ -6,6 +6,9 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+import json
+from tqdm import tqdm
+
 
 @dataclasses.dataclass
 class FrameSpec:
@@ -35,7 +38,7 @@ def load_episode_sequences(data_dir: str | Path) -> list[EpisodeSequence]:
         raise FileNotFoundError(f"No episode directories found in {data_dir}")
 
     episodes: list[EpisodeSequence] = []
-    for episode_dir in episode_dirs[:2]:
+    for episode_dir in tqdm(episode_dirs[:15]):
         images = np.load(episode_dir / "images.npy", allow_pickle=False)
         states = np.load(episode_dir / "states.npy", allow_pickle=False)
         actions = np.load(episode_dir / "actions.npy", allow_pickle=False)
@@ -120,7 +123,41 @@ def default_state_transform(state: np.ndarray) -> torch.Tensor:
 
 
 def default_action_transform(action: np.ndarray) -> torch.Tensor:
-    return torch.from_numpy(np.asarray(action)).float()
+    # The recorded policy output is unbounded, but MetaDrive clips to [-1, 1] in
+    # BaseVehicle before applying it, so only the clipped value drove the sim.
+    action = np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
+    return torch.from_numpy(action).float()
+
+
+@dataclasses.dataclass
+class StateStandardizer:
+    """Standardize state vectors with per-dimension training statistics."""
+
+    mean: np.ndarray
+    scale: np.ndarray
+
+    def __call__(self, state: np.ndarray) -> torch.Tensor:
+        standardized = (np.asarray(state, dtype=np.float32) - self.mean) / self.scale
+        return torch.from_numpy(standardized).float()
+
+
+def compute_state_standardizer(
+    episodes: list["EpisodePathSequence"],
+    epsilon: float = 1e-6,
+) -> StateStandardizer:
+    """Fit state statistics on the given episodes only.
+
+    Dimensions with no variance are mapped to exactly zero rather than amplified.
+    """
+
+    states = np.concatenate(
+        [np.load(episode.state_path, allow_pickle=False) for episode in episodes]
+    ).astype(np.float32)
+    standard_deviation = states.std(axis=0)
+    return StateStandardizer(
+        mean=states.mean(axis=0),
+        scale=np.where(standard_deviation > epsilon, standard_deviation, 1.0),
+    )
 
 
 @dataclasses.dataclass
@@ -133,7 +170,7 @@ class Transformations:
     action_transform: Callable[[np.ndarray], torch.Tensor] = default_action_transform
 
 
-class EpisodeFrameWindowDataset(Dataset):
+class EpisodeFrameWindowDataset_V1(Dataset):
     def __init__(
         self,
         episodes: list[EpisodeSequence],
@@ -175,6 +212,111 @@ class EpisodeFrameWindowDataset(Dataset):
         state_t = self._transformations.state_transform(current_state)
         action_t = self._transformations.action_transform(next_action)
         target_t = self._transformations.frame_transform(target_frame.image_array)
+
+        return {
+            "frame_history": frame_history_t,
+            "state": state_t,
+            "action": action_t,
+            "frame_next": target_t,
+        }
+
+
+@dataclasses.dataclass
+class EpisodePathSequence:
+    episode_name: str
+    frame_path: Path
+    state_path: Path
+    action_path: Path
+    num_steps: int
+
+
+def load_episode_path_sequences(
+    data_dir: str | Path,
+) -> list[EpisodePathSequence]:
+
+    data_dir = Path(data_dir)
+    episode_dirs = sorted(path for path in data_dir.glob("episode_*") if path.is_dir())
+    if not episode_dirs:
+        raise FileNotFoundError(f"No episode directories found in {data_dir}")
+
+    episodes: list[EpisodePathSequence] = []
+    for episode_dir in episode_dirs[:15]:
+        frame_path = episode_dir / "images.npy"
+        state_path = episode_dir / "states.npy"
+        action_path = episode_dir / "actions.npy"
+        meta_path = episode_dir / "meta.json"
+        with open(meta_path, "r") as f:
+            meta = json.load(f)
+        num_steps = meta["num_steps"]
+        episodes.append(
+            EpisodePathSequence(
+                episode_name=episode_dir.name,
+                frame_path=frame_path,
+                state_path=state_path,
+                action_path=action_path,
+                num_steps=num_steps,
+            )
+        )
+    return episodes
+
+
+@dataclasses.dataclass
+class Datapoint:
+    episode_index: int
+    start_frame_index: int
+    end_frame_index: int
+
+
+class EpisodeFrameWindowDataset_V2(Dataset):
+    def __init__(
+        self,
+        episodes: list[EpisodePathSequence],
+        transformations: Transformations,
+        window_size: int = 3,
+        stride: int = 1,
+    ):
+        self._transformations = transformations
+        self._episodes = episodes
+        self._window_size = window_size
+        self._stride = stride
+        self._datapoint_mapping = self._build_datapoint_mapping()
+
+    def _build_datapoint_mapping(self) -> list[Datapoint]:
+        datapoints: list[Datapoint] = []
+        for episode_index, episode in enumerate(self._episodes):
+            for step in range(
+                0, episode.num_steps - self._window_size, self._stride
+            ):
+                datapoints.append(
+                    Datapoint(
+                        episode_index=episode_index,
+                        start_frame_index=step,
+                        end_frame_index=step + self._window_size,
+                    )
+                )
+        return datapoints
+
+    def __len__(self) -> int:
+        return len(self._datapoint_mapping)
+
+    def __getitem__(self, index: int) -> ModelInput:
+
+        datapoint = self._datapoint_mapping[index]
+        episode = self._episodes[datapoint.episode_index]
+        frame = np.load(episode.frame_path, mmap_mode="r", allow_pickle=False)
+        state = np.load(episode.state_path, mmap_mode="r", allow_pickle=False)
+        action = np.load(episode.action_path, mmap_mode="r", allow_pickle=False)
+
+        frame_history = frame[datapoint.start_frame_index : datapoint.end_frame_index]
+        target_frame = frame[datapoint.end_frame_index]
+        frame_history_t = self._transformations.frame_history_transform(frame_history)
+        state_t = self._transformations.state_transform(
+            state[datapoint.end_frame_index - 1]
+        )
+        action_t = self._transformations.action_transform(
+            action[datapoint.end_frame_index - 1]
+        )
+        target_t = self._transformations.frame_transform(target_frame)
 
         return {
             "frame_history": frame_history_t,

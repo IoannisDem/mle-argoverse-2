@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 from pathlib import Path
 from typing import Callable
@@ -10,6 +11,8 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 import wandb
+
+from train.metrics import FrameMetricAccumulator, FrameMetrics
 
 
 logger = logging.getLogger(__name__)
@@ -26,6 +29,7 @@ class TrainingConfig:
     early_stopping_patience: int | None = 5
     log_every_n_epochs: int = 1
     use_wandb: bool = False
+    wandb_project: str = "mle-argoverse-2"
 
 
 @dataclasses.dataclass
@@ -33,6 +37,10 @@ class EpochMetrics:
     epoch: int
     train_loss: float
     val_loss: float
+    val_persistence_l1: float | None = None
+    val_skill: float | None = None
+    val_psnr: float | None = None
+    val_ssim: float | None = None
 
 
 @dataclasses.dataclass
@@ -64,16 +72,31 @@ def train_model(
         config.learning_rate,
     )
 
+    if config.use_wandb:
+        wandb.init(project=config.wandb_project, config=dataclasses.asdict(config))
+
     train_state = TrainState(criterion, config.device, optimizer)
     eval_state = TrainState(criterion, config.device, optimizer=None)
 
     history: list[EpochMetrics] = []
+    best_val_loss = float("inf")
+    epochs_without_improvement = 0
+    if config.checkpoint_dir is not None:
+        config.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     for epoch in range(1, config.num_epochs + 1):
-        train_loss = _run_epoch(model, train_state, dataset.train_loader)
-        val_loss = _run_epoch(model, eval_state, dataset.val_loader)
+        train_loss, _ = _run_epoch(model, train_state, dataset.train_loader)
+        accumulator = FrameMetricAccumulator()
+        val_loss, frame_metrics = _run_epoch(
+            model, eval_state, dataset.val_loader, accumulator
+        )
 
-        metrics = EpochMetrics(epoch=epoch, train_loss=train_loss, val_loss=val_loss)
+        metrics = EpochMetrics(
+            epoch=epoch,
+            train_loss=train_loss,
+            val_loss=val_loss,
+            **_frame_metric_fields(frame_metrics),
+        )
         history.append(metrics)
 
         if (
@@ -82,21 +105,110 @@ def train_model(
             or epoch == config.num_epochs
         ):
             logger.info(
-                "Epoch %d/%d - train_loss=%.6f, val_loss=%.6f",
+                "Epoch %d/%d - train_loss=%.6f, val_loss=%.6f%s",
                 epoch,
                 config.num_epochs,
                 train_loss,
                 val_loss,
+                _format_frame_metrics(frame_metrics),
             )
 
         if config.use_wandb:
             wandb.log(dataclasses.asdict(metrics), step=epoch)
 
-    logger.info("Training complete")
+        if config.checkpoint_dir is not None:
+            _save_checkpoint(
+                model=model,
+                optimizer=optimizer,
+                metrics=metrics,
+                history=history,
+                config=config,
+                filename="checkpoint_last.pt",
+            )
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            epochs_without_improvement = 0
+            if config.checkpoint_dir is not None:
+                _save_checkpoint(
+                    model=model,
+                    optimizer=optimizer,
+                    metrics=metrics,
+                    history=history,
+                    config=config,
+                    filename="checkpoint_best.pt",
+                )
+        else:
+            epochs_without_improvement += 1
+
+        if (
+            config.early_stopping_patience is not None
+            and epochs_without_improvement >= config.early_stopping_patience
+        ):
+            logger.info(
+                "Early stopping after %d epochs without validation improvement",
+                epochs_without_improvement,
+            )
+            break
+
+    if config.checkpoint_dir is not None:
+        with (config.checkpoint_dir / "loss_history.json").open("w") as file:
+            json.dump([dataclasses.asdict(item) for item in history], file, indent=2)
+
+    logger.info("Training complete after %d epochs", len(history))
     return history
 
 
-def _run_epoch(model: nn.Module, state: TrainState, dataloader: DataLoader) -> float:
+def _frame_metric_fields(metrics: FrameMetrics | None) -> dict[str, float]:
+    if metrics is None:
+        return {}
+    return {
+        "val_persistence_l1": metrics.persistence_l1,
+        "val_skill": metrics.skill,
+        "val_psnr": metrics.psnr,
+        "val_ssim": metrics.ssim,
+    }
+
+
+def _format_frame_metrics(metrics: FrameMetrics | None) -> str:
+    if metrics is None:
+        return ""
+    return (
+        f", persistence_l1={metrics.persistence_l1:.6f}"
+        f", skill={metrics.skill:.3f}"
+        f", psnr={metrics.psnr:.2f}dB"
+        f", ssim={metrics.ssim:.4f}"
+    )
+
+
+def _save_checkpoint(
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    metrics: EpochMetrics,
+    history: list[EpochMetrics],
+    config: TrainingConfig,
+    filename: str,
+) -> None:
+    """Save model state, optimizer state, and training progress."""
+
+    checkpoint = {
+        "epoch": metrics.epoch,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "train_loss": metrics.train_loss,
+        "val_loss": metrics.val_loss,
+        "history": [dataclasses.asdict(item) for item in history],
+        "config": dataclasses.asdict(config),
+    }
+    torch.save(checkpoint, config.checkpoint_dir / filename)
+
+
+def _run_epoch(
+    model: nn.Module,
+    state: TrainState,
+    dataloader: DataLoader,
+    accumulator: FrameMetricAccumulator | None = None,
+) -> tuple[float, FrameMetrics | None]:
     is_training = state.optimizer is not None
     model.train(is_training)
 
@@ -108,12 +220,15 @@ def _run_epoch(model: nn.Module, state: TrainState, dataloader: DataLoader) -> f
         if is_training:
             batch_loss = training_step(model, state, batch)
         else:
-            batch_loss = validation_step(model, state, batch)
+            batch_loss, predicted_frame = validation_step(model, state, batch)
+            if accumulator is not None:
+                accumulator.update(predicted_frame, batch)
 
         total_loss += batch_loss
         num_batches += 1
 
-    return total_loss / num_batches
+    frame_metrics = accumulator.compute() if accumulator is not None else None
+    return total_loss / num_batches, frame_metrics
 
 
 def training_step(model: nn.Module, state: TrainState, batch: Batch) -> float:
@@ -127,10 +242,12 @@ def training_step(model: nn.Module, state: TrainState, batch: Batch) -> float:
 
 
 @torch.no_grad()
-def validation_step(model: nn.Module, state: TrainState, batch: Batch) -> float:
+def validation_step(
+    model: nn.Module, state: TrainState, batch: Batch
+) -> tuple[float, torch.Tensor]:
     predicted_frame = _forward_pass(model, batch)
     loss = _compute_loss(predicted_frame, batch, state.criterion)
-    return loss.item()
+    return loss.item(), predicted_frame
 
 
 def _move_batch_to_device(batch: Batch, device: str) -> Batch:
