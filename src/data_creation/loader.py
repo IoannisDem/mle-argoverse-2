@@ -103,7 +103,10 @@ def default_frame_history_transform(frame_history: np.ndarray) -> torch.Tensor:
             "Expected frame history with shape [time, height, width, channels] "
             f"or [time, height, width, channels, 1], got {frame_history.shape}"
         )
-    return torch.from_numpy(frame_history).permute(0, 3, 1, 2).float() / 255.0
+    # Copy into float32 here: the source is a read-only memmap slice, which
+    # torch.from_numpy cannot safely share, and this fuses the cast with the copy.
+    scaled = torch.from_numpy(np.array(frame_history, dtype=np.float32)).div_(255.0)
+    return scaled.permute(0, 3, 1, 2)
 
 
 def default_frame_transform(image_array: np.ndarray) -> torch.Tensor:
@@ -115,11 +118,12 @@ def default_frame_transform(image_array: np.ndarray) -> torch.Tensor:
             "Expected frame with shape [height, width, channels] or "
             f"[height, width, channels, 1], got {image_array.shape}"
         )
-    return torch.from_numpy(image_array).permute(2, 0, 1).float() / 255.0
+    scaled = torch.from_numpy(np.array(image_array, dtype=np.float32)).div_(255.0)
+    return scaled.permute(2, 0, 1)
 
 
 def default_state_transform(state: np.ndarray) -> torch.Tensor:
-    return torch.from_numpy(np.asarray(state)).float()
+    return torch.from_numpy(np.array(state, dtype=np.float32))
 
 
 def default_action_transform(action: np.ndarray) -> torch.Tensor:
@@ -284,9 +288,7 @@ class EpisodeFrameWindowDataset_V2(Dataset):
     def _build_datapoint_mapping(self) -> list[Datapoint]:
         datapoints: list[Datapoint] = []
         for episode_index, episode in enumerate(self._episodes):
-            for step in range(
-                0, episode.num_steps - self._window_size, self._stride
-            ):
+            for step in range(0, episode.num_steps - self._window_size, self._stride):
                 datapoints.append(
                     Datapoint(
                         episode_index=episode_index,
