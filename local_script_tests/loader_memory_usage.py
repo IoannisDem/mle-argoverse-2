@@ -24,7 +24,6 @@ class LoaderBuilderConfig:
 
 
 class MemoryMonitor:
-
     def __init__(self, interval: float = 0.05):
         self.interval = interval
         self.process = psutil.Process(os.getpid())
@@ -122,10 +121,7 @@ def main() -> None:
                 base_kwargs,
                 batch_size,
             )
-            print(
-                f"  iteration_time={iteration_time:.3f}s "
-                f"peak_rss={peak_mb:.1f} MB"
-            )
+            print(f"  iteration_time={iteration_time:.3f}s peak_rss={peak_mb:.1f} MB")
             times.append(iteration_time)
             peaks_mb.append(peak_mb)
 
@@ -157,9 +153,7 @@ def main() -> None:
 
         lines = line1 + line2
         ax1.legend(lines, [line.get_label() for line in lines], loc="upper center")
-        fig.suptitle(
-            f"{builder_name} DataLoader Benchmark — batch size = {batch_size}"
-        )
+        fig.suptitle(f"{builder_name} DataLoader Benchmark — batch size = {batch_size}")
         fig.tight_layout()
 
         out_path = f"dataloader_profile_{builder_name.lower()}.png"

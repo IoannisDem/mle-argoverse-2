@@ -65,12 +65,12 @@ class FrameEncoder(nn.Module):
             projected_dim if projected_dim is not None else embedding_dim
         )
         self.stage_channels = (*hidden_channels, embedding_dim)
+        input_channels = (image_channels, *self.stage_channels[:-1])
+        output_channels = self.stage_channels
 
         self.stages = nn.ModuleList(
             _conv_stage(in_channels, out_channels)
-            for in_channels, out_channels in zip(
-                (image_channels, *self.stage_channels[:-1]), self.stage_channels
-            )
+            for in_channels, out_channels in zip(input_channels, output_channels)
         )
         self.pool = nn.AdaptiveAvgPool2d((grid_size, grid_size))
         self.projection = nn.Linear(
