@@ -86,7 +86,8 @@ class FrameEncoder(nn.Module):
             stage_features.append(features)
 
         pooled = self.pool(features).flatten(start_dim=1)
-        return EncodedFrames(self.projection(pooled), stage_features)
+        projected = self.projection(pooled)
+        return EncodedFrames(projected, stage_features)
 
     @property
     def output_dim(self) -> int:
@@ -277,8 +278,9 @@ class BaselineWorldModel(nn.Module):
             projected_dim=config.latent_dim,
             hidden_channels=config.encoder_hidden_channels,
         )
+        frame_encoder_output_dim = self.frame_encoder.output_dim
         self.temporal_encoder = TemporalEncoder(
-            input_dim=self.frame_encoder.output_dim,
+            input_dim=frame_encoder_output_dim,
             latent_dim=config.latent_dim,
         )
         self.condition_encoder = ConditionEncoder(
