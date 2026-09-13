@@ -10,6 +10,7 @@ from typing import Callable
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 import wandb
 
@@ -269,7 +270,13 @@ def _run_epoch(
     total_loss = 0.0
     num_batches = 0
 
-    for batch in dataloader:
+    phase = "train" if is_training else "val"
+    for batch in tqdm(
+        dataloader,
+        desc=phase,
+        leave=False,
+        unit="batch",
+    ):
         batch = _move_batch_to_device(batch, state.device)
         if is_training:
             batch_loss = training_step(model, state, batch)
