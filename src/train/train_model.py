@@ -162,6 +162,18 @@ def train_model(
                 config=config,
                 filename="checkpoint_last.pt",
             )
+            _save_checkpoint(
+                model=model,
+                optimizer=optimizer,
+                metrics=metrics,
+                history=history,
+                config=config,
+                filename=f"checkpoint_epoch_{epoch:03d}.pt",
+            )
+            with (
+                config.checkpoint_dir / f"metrics_epoch_{epoch:03d}.json"
+            ).open("w") as file:
+                json.dump(dataclasses.asdict(metrics), file, indent=2)
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
