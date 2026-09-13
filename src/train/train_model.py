@@ -93,6 +93,11 @@ def train_model(
     config: TrainingConfig,
 ) -> list[EpochMetrics]:
     model.to(config.device)
+    device = torch.device(config.device)
+    device_name = (
+        torch.cuda.get_device_name(device) if device.type == "cuda" else "CPU"
+    )
+    logger.info("Using device: %s (%s)", device, device_name)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
     scheduler = build_scheduler(
         optimizer, config, steps_per_epoch=len(dataset.train_loader)
