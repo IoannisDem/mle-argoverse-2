@@ -5,6 +5,7 @@
 **/data/
 **/data-zip/
 **/local_scripts_test/
+**/notebooks/
 
 # Image files
 *.png
