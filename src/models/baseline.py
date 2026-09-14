@@ -132,14 +132,6 @@ class ConditionEncoder(nn.Module):
 
 
 class FrameDecoder(nn.Module):
-    """Decode a latent into a residual image bounded to [-1, 1].
-
-    ``skip_channels`` lists encoder stage widths from finest to coarsest spatial
-    resolution. Skips are aligned to the highest-resolution blocks, so the finest
-    skip feeds the final block, letting texture reach the output without passing
-    through the latent bottleneck. The output convolution is zero-initialised, so
-    an untrained decoder emits a zero residual.
-    """
 
     def __init__(
         self,
@@ -159,25 +151,35 @@ class FrameDecoder(nn.Module):
             base_channels * initial_size * initial_size,
         )
 
-        num_stages = max(
+        num_upsample_stages = max(
             1, math.ceil(math.log2(max(max_output_size / initial_size, 1)))
         )
-        widths = [base_channels]
-        for _ in range(num_stages):
-            widths.append(max(min_channels, widths[-1] // 2))
+        stage_channels = [base_channels]
+        for _ in range(num_upsample_stages):
+            stage_channels.append(max(min_channels, stage_channels[-1] // 2))
+        self.stage_channels = tuple(stage_channels)
 
-        self.skip_index_per_block = self._align_skips(num_stages, len(skip_channels))
+        self.skip_index_per_stage = self._align_skips(
+            num_upsample_stages, len(skip_channels)
+        )
+        skip_widths = tuple(
+            0 if skip_index is None else skip_channels[skip_index]
+            for skip_index in self.skip_index_per_stage
+        )
         self.up_blocks = nn.ModuleList(
             _upsample_block(
-                in_channels + self._skip_width(block_index, skip_channels),
+                in_channels + skip_width,
                 out_channels,
             )
-            for block_index, (in_channels, out_channels) in enumerate(
-                zip(widths[:-1], widths[1:])
+            for (in_channels, out_channels), skip_width in zip(
+                zip(self.stage_channels[:-1], self.stage_channels[1:]),
+                skip_widths,
             )
         )
 
-        residual_conv = nn.Conv2d(widths[-1], image_channels, kernel_size=3, padding=1)
+        residual_conv = nn.Conv2d(
+            self.stage_channels[-1], image_channels, kernel_size=3, padding=1
+        )
         nn.init.zeros_(residual_conv.weight)
         nn.init.zeros_(residual_conv.bias)
         self.to_residual = nn.Sequential(residual_conv, nn.Tanh())
@@ -192,10 +194,6 @@ class FrameDecoder(nn.Module):
             alignment[block_index] = skip_index
         return alignment
 
-    def _skip_width(self, block_index: int, skip_channels: Sequence[int]) -> int:
-        skip_index = self.skip_index_per_block[block_index]
-        return 0 if skip_index is None else skip_channels[skip_index]
-
     def forward(
         self,
         latent: torch.Tensor,
@@ -207,14 +205,14 @@ class FrameDecoder(nn.Module):
         )
 
         target_h, target_w = output_size
-        for block_index, block in enumerate(self.up_blocks):
+        for stage_index, block in enumerate(self.up_blocks):
             current_h, current_w = decoded.shape[-2:]
             if current_h < target_h or current_w < target_w:
                 decoded = F.interpolate(
                     decoded, scale_factor=2, mode="bilinear", align_corners=False
                 )
 
-            skip_index = self.skip_index_per_block[block_index]
+            skip_index = self.skip_index_per_stage[stage_index]
             if skip_index is not None and skip_index < len(skip_features):
                 decoded = torch.cat(
                     (
@@ -252,13 +250,6 @@ class BaselineModelConfig:
 
 
 class BaselineWorldModel(nn.Module):
-    """Action-conditioned next-frame predictor.
-
-    The decoder predicts a residual that is added to the last observed frame, so a
-    zero residual reproduces that frame and the model starts from the copy-last-frame
-    baseline. Predictions are returned unclamped; clamp to [0, 1] before rendering or
-    computing image metrics.
-    """
 
     def __init__(
         self,

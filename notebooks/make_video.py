@@ -1,11 +1,9 @@
+import argparse
 from pathlib import Path
 from typing import Sequence
 
 import cv2
 import numpy as np
-import glob
-
-import utils
 
 
 def render_video(
@@ -26,6 +24,7 @@ def render_video(
 
     H, W = first.shape[1:3]
 
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     writer = cv2.VideoWriter(
         str(output_path),
         cv2.VideoWriter_fourcc(*"mp4v"),
@@ -40,12 +39,15 @@ def render_video(
         if isinstance(array, (str, Path)):
             array = np.load(array)
 
-        # Expect shape (B, H, W, 3, stack)
-        if array.ndim != 5:
-            raise ValueError(f"Expected 5D array, got {array.shape}")
-
-        # Extract current frame (0th in stack)
-        frames = array[..., 0]  # -> (B, H, W, 3)
+        if array.ndim == 5 and array.shape[-1] == 1:
+            frames = array[..., 0]
+        elif array.ndim == 4:
+            frames = array
+        else:
+            raise ValueError(
+                "Expected images with shape (frames, height, width, 3) "
+                f"or (frames, height, width, 3, 1), got {array.shape}"
+            )
 
         for i, frame in enumerate(frames):
 
@@ -95,23 +97,31 @@ def render_video(
 
 
 def main():
-    current_path = Path.cwd()
-    data_path = current_path / "data" / "raw" / "traffic_0.15_accident_0_steps_1000"
-    images_data_paths = glob.glob(str(data_path / "**" / "images.npy"), recursive=True)
+    parser = argparse.ArgumentParser(description="Render one episode as a video.")
+    parser.add_argument(
+        "--episode",
+        type=Path,
+        required=True,
+        help="Episode directory containing images.npy, or a path to images.npy.",
+    )
+    parser.add_argument("--output", type=Path, default=Path("sample.mp4"))
+    parser.add_argument("--fps", type=int, default=10)
+    args = parser.parse_args()
 
-    images_data_paths = images_data_paths
-    data_paths = {path.split("/")[-2]: path for path in images_data_paths}
-    episodes_images = {key:utils.to_numpy_image( np.load(value)) for key, value in data_paths.items()}
-
-    names = list(episodes_images.keys())
-    images = list(episodes_images.values())
+    images_path = (
+        args.episode if args.episode.suffix == ".npy"
+        else args.episode / "images.npy"
+    )
+    images = np.load(images_path, allow_pickle=False)
+    name = args.episode.parent.name if args.episode.suffix == ".npy" else args.episode.name
 
     render_video(
-        images,
-        names,
-        "sample.mp4",
-        fps = 10,
+        (images,),
+        (name,),
+        args.output,
+        fps=args.fps,
     )
+    print(f"Saved {name} video to {args.output}")
 
 if __name__ == "__main__":
     main()
