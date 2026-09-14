@@ -1,4 +1,4 @@
-# mle-argoverse-2
+# Next frame prediction - Small world model
 
 ## Project Objective
 
@@ -12,3 +12,8 @@ The goal is to learn how driving actions affect the visual scene, enabling model
 - `src/data_creation/loader.py` — loads episode data and creates sliding-window training samples from consecutive frames.
 - `src/train/train_baseline.py` — prepares the datasets, builds the dataloaders, and trains the baseline model.
 - `src/models/baseline.py` — defines the action-conditioned model that encodes frame history, state, and action to predict the next frame.
+
+## Reference
+
+For an example of well-structured, production-quality code, see the
+[photo retrieval project](https://github.com/IoannisDem/photo_retrieval).
